@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SONYC Sensor Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <style>
+    body { margin: 0; padding: 0; font-family: sans-serif; }
+    #map { width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div style="position:absolute; top:10px; right:10px; z-index:1000;">
+  <button id="toggleCircles" style="padding:8px 14px; background:white; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:13px;">
+    Show 200m radius
+  </button>
+</div>
+<div style="position:absolute; bottom:30px; left:50%; transform:translateX(-50%); z-index:1000; background:white; padding:12px 20px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.2); text-align:center;">
+  <label style="font-size:13px; font-weight:bold;">Hour: <span id="hourLabel">All</span></label><br>
+  <input type="range" id="hourSlider" min="-1" max="23" value="-1" style="width:300px; margin-top:6px;">
+  <br>
+  <small style="color:#888;">-1 = show all hours</small>
+</div>
+<script>
+  const map = L.map('map').setView([40.728, -73.990], 13);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © CARTO'
+  }).addTo(map);
+
+  // complaint heatmap
+  let allComplaints = [];
+  let heatLayer = null;
+
+  function updateHeatmap(hour) {
+    const filtered = hour === -1 
+      ? allComplaints 
+      : allComplaints.filter(c => c[2] === hour);
+  
+    const heatData = filtered.map(c => [c[0], c[1], 0.5]);
+  
+    if (heatLayer) map.removeLayer(heatLayer);
+    heatLayer = L.heatLayer(heatData, {
+      radius: 10,
+      blur: 17,
+      maxZoom: 17,
+      gradient: {0.0: 'rgba(0,0,0,0)', 0.3: '#caf0f8', 0.6: '#90e0ef', 1.0: '#0077b6'}
+    }).addTo(map);
+  }
+
+  fetch('complaint_coords_with_time.json')
+    .then(r => r.json())
+    .then(coords => {
+      allComplaints = coords;
+      updateHeatmap(-1);
+    });
+
+  document.getElementById('hourSlider').addEventListener('input', e => {
+    const hour = parseInt(e.target.value);
+    document.getElementById('hourLabel').textContent = hour === -1 ? 'All' : `${hour}:00`;
+    updateHeatmap(hour);
+  });
+
+  // sensor + 200m
+  const circleLayer = L.layerGroup();
+  
+  let allSensorMarkers = [];
+  let allSensors = [];
+
+  fetch('sensor_data_enriched.json')
+    .then(r => r.json())
+    .then(sensors => {
+      allSensors = sensors;
+      renderSensors(-1);
+    });
+
+  function renderSensors(hour) {
+    // 清除旧marker
+    allSensorMarkers.forEach(m => map.removeLayer(m));
+    allSensorMarkers = [];
+    circleLayer.clearLayers();
+
+    allSensors.forEach(s => {
+      let color = '#aaa'; // 默认灰色
+
+      if (hour === -1) {
+        // 显示全部：有正样本的红，其余灰
+        color = s.has_positive ? '#e63946' : '#aaa';
+      } else {
+        // 该小时有正样本录音→红，有录音但无投诉→蓝，无录音→灰
+        if (s.pos_hours.includes(hour)) {
+          color = '#e63946'; // 红
+        } else {
+         color = '#aaa'; // grey
+        }
+      }
+
+      const marker = L.circleMarker([s.latitude, s.longitude], {
+        radius: 8,
+        fillColor: color,
+        color: '#fff',
+        weight: 1.5,
+        opacity: 1,
+        fillOpacity: 0.85
+      })
+      .bindPopup(`<b>${s.label}</b>`)
+      .addTo(map);
+
+      allSensorMarkers.push(marker);
+  
+      L.circle([s.latitude, s.longitude], {
+        radius: 200,
+        color: color,
+        weight: 1,
+        fillColor: color,
+        fillOpacity: 0.03,
+        interactive: false
+      }).addTo(circleLayer);
+    });
+  }
+
+  // time-window silder
+  document.getElementById('hourSlider').addEventListener('input', e => {
+    const hour = parseInt(e.target.value);
+    document.getElementById('hourLabel').textContent = hour === -1 ? 'All' : `${hour}:00`;
+    updateHeatmap(hour);
+    renderSensors(hour);
+  });
+
+  // 200m toggle
+  let circlesVisible = false;
+  document.getElementById('toggleCircles').addEventListener('click', () => {
+    if (circlesVisible) {
+      map.removeLayer(circleLayer);
+      circlesVisible = false;
+      document.getElementById('toggleCircles').textContent = 'Show 200m radius';
+    } else {
+      circleLayer.addTo(map);
+      circlesVisible = true;
+      document.getElementById('toggleCircles').textContent = 'Hide 200m radius';
+    }
+  });
+</script>
+</body>
+</html>
